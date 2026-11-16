@@ -254,7 +254,7 @@ export function VoiceRoom({
 
     for (const item of transcriptItems) {
       if (agent && item.identity !== agent.identity) continue;
-      if (item.trackId && agentTrackId && item.trackId !== agentTrackId) continue;
+      if (agentTrackId && item.trackId !== agentTrackId) continue;
       const text = item.text.trim();
       if (!text) continue;
       const key = normalize(text);
@@ -293,6 +293,19 @@ export function VoiceRoom({
       });
     }
 
+    const localTrackId = microphoneTrack?.trackSid;
+    for (const item of transcriptItems) {
+      if (item.identity !== localParticipant.identity) continue;
+      if (localTrackId && item.trackId !== localTrackId) continue;
+      items.push({
+        id: `user-${item.id}`,
+        identity: item.identity,
+        name: displayName || 'You',
+        text: item.text,
+        timestamp: item.timestamp,
+      });
+    }
+
     for (const reply of agentReplyItems) {
       items.push({
         id: reply.id,
@@ -304,7 +317,7 @@ export function VoiceRoom({
     }
 
     return items.sort((a, b) => a.timestamp - b.timestamp);
-  }, [agent, agentReplyItems, chatMessages, displayName, localParticipant.identity]);
+  }, [agent, agentReplyItems, chatMessages, displayName, localParticipant.identity, microphoneTrack, transcriptItems]);
 
   useEffect(() => {
     const element = transcriptRef.current;

@@ -69,7 +69,7 @@ export function VoiceRoom({
   const room = useRoomContext();
   const connectionState = useConnectionState(room);
   const { localParticipant, isMicrophoneEnabled, microphoneTrack } = useLocalParticipant();
-  const { agent, state, audioTrack } = useVoiceAssistant();
+  const { agent, state, audioTrack, agentTranscriptions } = useVoiceAssistant();
   const { canPlayAudio, startAudio } = useAudioPlayback(room);
   const { quality } = useConnectionQualityIndicator({ participant: localParticipant });
   const transcriptions = useTranscriptions();
@@ -220,6 +220,55 @@ export function VoiceRoom({
     [agent, displayName, localParticipant.identity],
   );
 
+  const agentReplyItems = useMemo(() => {
+    const bySegment = new Map<string, { id: string; text: string; timestamp: number }>();
+    for (const segment of agentTranscriptions) {
+      const text = segment.text?.trim();
+      if (!text) continue;
+      bySegment.set(segment.id, {
+        id: `voice-${segment.id}`,
+        text,
+        timestamp: segment.receivedAt,
+      });
+    }
+    return [...bySegment.values()];
+  }, [agentTranscriptions]);
+
+  const chatItems = useMemo(() => {
+    const items: Array<{
+      id: string;
+      identity: string;
+      name: string;
+      text: string;
+      timestamp: number;
+    }> = [];
+
+    for (const message of chatMessages) {
+      items.push({
+        id: `chat-${message.id}`,
+        identity: message.from?.identity ?? 'agent',
+        name:
+          message.from?.identity === localParticipant.identity
+            ? displayName || 'You'
+            : message.from?.name || 'AI agent',
+        text: message.message,
+        timestamp: message.timestamp,
+      });
+    }
+
+    for (const reply of agentReplyItems) {
+      items.push({
+        id: reply.id,
+        identity: agent?.identity ?? 'agent',
+        name: agent?.name || 'AI agent',
+        text: reply.text,
+        timestamp: reply.timestamp,
+      });
+    }
+
+    return items.sort((a, b) => a.timestamp - b.timestamp);
+  }, [agent, agentReplyItems, chatMessages, displayName, localParticipant.identity]);
+
   useEffect(() => {
     const element = transcriptRef.current;
     if (element) element.scrollTop = element.scrollHeight;
@@ -228,7 +277,7 @@ export function VoiceRoom({
   useEffect(() => {
     const element = chatRef.current;
     if (element) element.scrollTop = element.scrollHeight;
-  }, [chatMessages.length, panel]);
+  }, [chatItems.length, panel]);
 
   const copyTranscript = useCallback(async () => {
     const text =
@@ -393,7 +442,17 @@ export function VoiceRoom({
                   Save
                 </button>
               </>
-            ) : null}
+            ) : (
+              <button
+                type="button"
+                className="mini mute-agent"
+                aria-pressed={agentMuted}
+                onClick={() => setAgentMuted((current) => !current)}
+                title="Mute or unmute the agent's voice"
+              >
+                {agentMuted ? 'Unmute agent' : 'Mute agent'}
+              </button>
+            )}
           </div>
 
           {panel === 'transcript' ? (
@@ -419,20 +478,17 @@ export function VoiceRoom({
           ) : (
             <>
               <div className="transcript chat" ref={chatRef} role="tabpanel">
-                {chatMessages.length === 0 ? (
-                  <p className="empty">Send a text message to the agent at any time.</p>
+                {chatItems.length === 0 ? (
+                  <p className="empty">
+                    Send a text message — spoken replies from the agent appear here too.
+                  </p>
                 ) : (
-                  chatMessages.map((message) => {
-                    const fromSelf = message.from?.identity === localParticipant.identity;
+                  chatItems.map((item) => {
+                    const fromSelf = item.identity === localParticipant.identity;
                     return (
-                      <div
-                        key={`${message.id}-${message.timestamp}`}
-                        className={`bubble ${fromSelf ? 'user' : 'agent'}`}
-                      >
-                        <span className="who">
-                          {fromSelf ? displayName || 'You' : message.from?.name || 'AI agent'}
-                        </span>
-                        <p>{message.message}</p>
+                      <div key={item.id} className={`bubble ${fromSelf ? 'user' : 'agent'}`}>
+                        <span className="who">{item.name}</span>
+                        <p>{item.text}</p>
                       </div>
                     );
                   })

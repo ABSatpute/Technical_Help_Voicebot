@@ -697,6 +697,11 @@ p {
   font-size: 0.72rem;
 }
 
+.tabs .mini[aria-pressed='true'] {
+  background: rgba(255, 92, 122, 0.16);
+  color: #ffb3c1;
+}
+
 .transcript {
   flex: 1;
   min-height: 0;

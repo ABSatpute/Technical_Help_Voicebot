@@ -69,7 +69,7 @@ export function VoiceRoom({
   const room = useRoomContext();
   const connectionState = useConnectionState(room);
   const { localParticipant, isMicrophoneEnabled, microphoneTrack } = useLocalParticipant();
-  const { agent, state, audioTrack, agentTranscriptions } = useVoiceAssistant();
+  const { agent, state, audioTrack } = useVoiceAssistant();
   const { canPlayAudio, startAudio } = useAudioPlayback(room);
   const { quality } = useConnectionQualityIndicator({ participant: localParticipant });
   const transcriptions = useTranscriptions();
@@ -220,19 +220,19 @@ export function VoiceRoom({
     [agent, displayName, localParticipant.identity],
   );
 
-  const agentReplyItems = useMemo(() => {
-    const bySegment = new Map<string, { id: string; text: string; timestamp: number }>();
-    for (const segment of agentTranscriptions) {
-      const text = segment.text?.trim();
-      if (!text) continue;
-      bySegment.set(segment.id, {
-        id: `voice-${segment.id}`,
-        text,
-        timestamp: segment.receivedAt,
-      });
-    }
-    return [...bySegment.values()];
-  }, [agentTranscriptions]);
+  const agentReplyItems = useMemo(
+    () =>
+      transcriptItems
+        .filter((item) => agent && item.identity === agent.identity)
+        .map((item) => ({
+          id: `voice-${item.id}`,
+          identity: item.identity,
+          name: agent?.name || 'AI agent',
+          text: item.text,
+          timestamp: item.timestamp,
+        })),
+    [agent, transcriptItems],
+  );
 
   const chatItems = useMemo(() => {
     const items: Array<{

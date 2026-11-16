@@ -69,7 +69,7 @@ export function VoiceRoom({
   const room = useRoomContext();
   const connectionState = useConnectionState(room);
   const { localParticipant, isMicrophoneEnabled, microphoneTrack } = useLocalParticipant();
-  const { agent, state, audioTrack } = useVoiceAssistant();
+  const { agent, state, audioTrack, agentTranscriptions } = useVoiceAssistant();
   const { canPlayAudio, startAudio } = useAudioPlayback(room);
   const { quality } = useConnectionQualityIndicator({ participant: localParticipant });
   const transcriptions = useTranscriptions();
@@ -197,19 +197,30 @@ export function VoiceRoom({
   }, [endPtt, startPtt, toggleMic]);
 
   const transcriptItems = useMemo(() => {
-    const byStream = new Map<string, { id: string; identity: string; text: string; timestamp: number }>();
+    const agentTrackId = audioTrack?.publication.trackSid;
+    const localTrackId = microphoneTrack?.trackSid;
+    const byStream = new Map<
+      string,
+      { id: string; identity: string; text: string; timestamp: number; trackId?: string }
+    >();
     for (const item of transcriptions) {
       const text = item.text?.trim();
       if (!text) continue;
+      const trackId = item.streamInfo.attributes?.['lk.transcribed_track_id'];
+      const publisher = item.participantInfo.identity;
+      let identity = publisher;
+      if (trackId && trackId === localTrackId) identity = localParticipant.identity;
+      else if (trackId && trackId === agentTrackId) identity = agent?.identity ?? publisher;
       byStream.set(item.streamInfo.id, {
         id: item.streamInfo.id,
-        identity: item.participantInfo.identity,
+        identity,
         text,
         timestamp: item.streamInfo.timestamp,
+        trackId,
       });
     }
     return [...byStream.values()].sort((a, b) => a.timestamp - b.timestamp);
-  }, [transcriptions]);
+  }, [agent, audioTrack, localParticipant.identity, microphoneTrack, transcriptions]);
 
   const labelFor = useCallback(
     (identity: string) => {
@@ -220,19 +231,45 @@ export function VoiceRoom({
     [agent, displayName, localParticipant.identity],
   );
 
-  const agentReplyItems = useMemo(
-    () =>
-      transcriptItems
-        .filter((item) => agent && item.identity === agent.identity)
-        .map((item) => ({
-          id: `voice-${item.id}`,
-          identity: item.identity,
-          name: agent?.name || 'AI agent',
-          text: item.text,
-          timestamp: item.timestamp,
-        })),
-    [agent, transcriptItems],
-  );
+  const agentReplyItems = useMemo(() => {
+    const name = agent?.name || 'AI agent';
+    const normalize = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
+
+    const bySegment = new Map<string, { id: string; identity: string; name: string; text: string; timestamp: number }>();
+    for (const segment of agentTranscriptions ?? []) {
+      const text = segment.text?.trim();
+      if (!text) continue;
+      bySegment.set(segment.id, {
+        id: `voice-${segment.id}`,
+        identity: agent?.identity ?? 'agent',
+        name,
+        text,
+        timestamp: segment.receivedAt,
+      });
+    }
+
+    const replies = [...bySegment.values()];
+    const overlaps = (a: string, b: string) => a === b || a.startsWith(b) || b.startsWith(a);
+    const agentTrackId = audioTrack?.publication.trackSid;
+
+    for (const item of transcriptItems) {
+      if (agent && item.identity !== agent.identity) continue;
+      if (item.trackId && agentTrackId && item.trackId !== agentTrackId) continue;
+      const text = item.text.trim();
+      if (!text) continue;
+      const key = normalize(text);
+      if (replies.some((reply) => overlaps(normalize(reply.text), key))) continue;
+      replies.push({
+        id: `stream-${item.id}`,
+        identity: agent?.identity ?? 'agent',
+        name,
+        text,
+        timestamp: item.timestamp,
+      });
+    }
+
+    return replies.sort((a, b) => a.timestamp - b.timestamp);
+  }, [agent, agentTranscriptions, audioTrack, transcriptItems]);
 
   const chatItems = useMemo(() => {
     const items: Array<{

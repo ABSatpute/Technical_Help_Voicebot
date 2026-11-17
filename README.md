@@ -407,9 +407,9 @@ GitHub Actions workflows live in `.github/workflows/`:
 | Workflow | Triggers | What it does |
 | --- | --- | --- |
 | `agent.yml` | Pull requests and pushes touching agent files; manual dispatch | Runs `uv lock --check`, `uv sync --locked`, and `py_compile`; on `main` it deploys to LiveKit Cloud with `lk agent deploy`. |
-| `frontend.yml` | Pull requests and pushes touching `frontend/**`; manual dispatch | Runs `npm ci` and `npm run build`; on `main` it deploys the prebuilt output to Vercel. |
+| `frontend.yml` | Pull requests and pushes touching `frontend/**`; manual dispatch | Runs `npm ci` and `npm run build`. Deployment is handled by Vercel's GitHub integration on merge to `main`. |
 
-Deployment jobs run only for pushes to `main` or manual dispatches and use the GitHub `production` environment. Deploy jobs are serialized with concurrency groups so two deploys cannot overlap.
+The agent deploy job runs only for pushes to `main` or manual dispatches, uses the GitHub `production` environment, and is serialized with a concurrency group.
 
 ### Required GitHub secrets
 
@@ -421,27 +421,14 @@ Add these in **Settings → Secrets and variables → Actions**. You can also sc
 | `LIVEKIT_API_KEY` | Agent workflow | LiveKit API key for deploying the agent. |
 | `LIVEKIT_API_SECRET` | Agent workflow | LiveKit API secret for deploying the agent. |
 | `GROQ_API_KEY` | Agent workflow | Passed to `lk agent deploy --secrets` so the hosted agent has the Groq key. |
-| `VERCEL_TOKEN` | Frontend workflow | Vercel access token for CLI deploys. |
-| `VERCEL_ORG_ID` | Frontend workflow | Vercel organisation/team ID. |
-| `VERCEL_PROJECT_ID` | Frontend workflow | Vercel project ID. |
 
-`VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` are already recorded in `frontend/.vercel/project.json` locally:
-
-```json
-{
-  "projectId": "prj_OZjKbsUMFzQNxDFiYLc9AwXMnbaW",
-  "orgId": "team_a2JB6SZVMcsIGKel7q3FtoTk",
-  "projectName": "technical-help-voicebot"
-}
-```
-
-That file is gitignored. Copy the IDs into GitHub secrets once.
+`GROQ_API_KEY` is written to the agent secrets on every agent deploy. The LiveKit credentials are used only by the CLI; LiveKit Cloud injects the runtime LiveKit credentials into the agent.
 
 ### Vercel project settings
 
-Because the frontend moved into `frontend/`, the Vercel project must use **Root Directory** `frontend`.
+The Vercel project is connected to this GitHub repository. Because the frontend now lives in `frontend/`, set the Vercel project's **Root Directory** to `frontend`. If this is not updated, Vercel's Git deployment fails.
 
-If Vercel's Git integration is also enabled, either disable it or remove the deploy job from `frontend.yml`. Otherwise each push to `main` can produce two deployments: one from Vercel Git and one from GitHub Actions.
+Vercel deploys the frontend automatically on pushes to `main`. No `VERCEL_TOKEN` is required for this flow. If you later want GitHub Actions to deploy Vercel as well, add `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`, then restore a CLI deploy job; the org and project IDs are stored in `frontend/.vercel/project.json` locally and that file is gitignored.
 
 Set the frontend runtime environment variables in Vercel for Production (and Preview if needed):
 
@@ -453,17 +440,13 @@ LIVEKIT_API_SECRET=your-livekit-api-secret
 
 ### Manual deployment
 
-Run either workflow from **Actions → select workflow → Run workflow**. The same commands can be run locally:
+Agent: run **Actions → Agent CI/CD → Run workflow**, or run `lk agent deploy --yes` locally.
+
+Frontend: push to `main` and let Vercel deploy, or run:
 
 ```powershell
-# Agent
-lk agent deploy --yes
-
-# Frontend
 cd frontend
-vercel pull --yes --environment=production
-vercel build --prod
-vercel deploy --prebuilt --prod
+npx vercel --prod
 ```
 
 ## Deployment

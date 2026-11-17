@@ -387,7 +387,7 @@ export function VoiceRoom({
         <div className="room-title">
           <img
             className="brand-icon"
-            src="/voicebot-icon.svg"
+            src="/voicebot-icon.png"
             alt=""
             width={32}
             height={32}

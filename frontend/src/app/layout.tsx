@@ -8,9 +8,15 @@ export const metadata: Metadata = {
     'Talk to a real-time AI voice agent for technical support across LiveKit, WebRTC, SIP, and connectivity issues.',
   applicationName: 'Technical Help Voicebot',
   icons: {
-    icon: '/voicebot-icon.svg',
-    shortcut: '/voicebot-icon.svg',
-    apple: '/voicebot-icon.svg',
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/favicon-16x16.png', type: 'image/png', sizes: '16x16' },
+      { url: '/favicon-32x32.png', type: 'image/png', sizes: '32x32' },
+      { url: '/favicon-48x48.png', type: 'image/png', sizes: '48x48' },
+      { url: '/voicebot-icon.png', type: 'image/png', sizes: '512x512' },
+    ],
+    shortcut: '/favicon.ico',
+    apple: [{ url: '/apple-touch-icon.png', type: 'image/png', sizes: '180x180' }],
   },
   openGraph: {
     title: 'Technical Help Voicebot',

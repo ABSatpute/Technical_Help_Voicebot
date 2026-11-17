@@ -166,7 +166,7 @@ This is a monorepo: the Python agent lives at the repository root and the Next.j
 | `livekit.toml` | LiveKit Cloud project subdomain and agent ID used by the `lk` CLI. |
 | `.env` | Local secrets. Never commit this file. |
 | `frontend/` | Next.js 16 App Router client. |
-| `frontend/public/voicebot-icon.svg` | Shared voicebot brand mark and browser favicon. |
+| `frontend/public/voicebot-icon.png` | Voicebot brand mark; favicon assets live in the same folder. |
 | `frontend/src/app/layout.tsx` | Page title, description, social metadata, and favicon links. |
 | `frontend/src/app/api/token/route.ts` | Server-only LiveKit token endpoint. |
 | `frontend/src/components/PreJoin.tsx` | Technical Help Voicebot join screen, name/room/mic selection, mic test, invite link. |
@@ -465,12 +465,12 @@ Styling is custom CSS in `frontend/src/app/globals.css`; the project does not us
 
 The production brand is **Technical Help Voicebot**.
 
-- `frontend/public/voicebot-icon.svg` is the shared voicebot mark.
-- `frontend/src/app/layout.tsx` sets the browser tab title, description, Open Graph/Twitter metadata, and favicon links to `/voicebot-icon.svg`.
+- `frontend/public/voicebot-icon.png` is the shared 512x512 brand mark. Generated favicon assets in the same folder: `favicon.ico`, `favicon-16x16.png`, `favicon-32x32.png`, `favicon-48x48.png`, and `apple-touch-icon.png`.
+- `frontend/src/app/layout.tsx` sets the browser tab title, description, Open Graph/Twitter metadata, and favicon links to these assets.
 - `frontend/src/components/PreJoin.tsx` uses the icon in the join-screen brand and updates the support-focused headline, feature list, room labels, and call-to-action text.
 - `frontend/src/components/VoiceRoom.tsx` uses the same icon in the in-room header.
 
-To replace the brand mark, update `voicebot-icon.svg`; the favicon and both UI placements follow automatically.
+To replace the brand mark, update `voicebot-icon.png` and regenerate the favicon assets; the browser tab and both UI placements follow automatically.
 
 ---
 

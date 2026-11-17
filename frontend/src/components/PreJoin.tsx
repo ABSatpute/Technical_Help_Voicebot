@@ -117,7 +117,7 @@ export function PreJoin({ onJoin, joining, error }: PreJoinProps) {
         <div className="brand">
           <img
             className="brand-icon"
-            src="/voicebot-icon.svg"
+            src="/voicebot-icon.png"
             alt=""
             width={32}
             height={32}

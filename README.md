@@ -1,27 +1,52 @@
-# LiveKit Voice Agent
+# Technical Help Voicebot
 
-A real-time customer-support voice agent built with **LiveKit Agents** (Python) and a **Next.js** web client. The browser joins a LiveKit room, the agent is dispatched automatically, and the conversation runs through a speech-to-text, LLM, and text-to-speech pipeline with live transcripts, text chat, microphone controls, and agent handoff.
+A real-time technical-support voice agent built with **LiveKit Agents** (Python) and a **Next.js** web client. The browser joins a LiveKit room, the agent is dispatched automatically, and the conversation runs through a speech-to-text, LLM, and text-to-speech pipeline with live transcripts, text chat, microphone controls, and agent handoff.
 
-The agent currently uses **Groq** for all three model stages (STT, LLM, TTS), so a single `GROQ_API_KEY` is enough.
+The production experience is branded **Technical Help Voicebot** and focuses on LiveKit, WebRTC, SIP, API-token, and connectivity support. The agent currently uses **Groq** for all three model stages (STT, LLM, TTS), so a single `GROQ_API_KEY` is enough.
 
 ---
 
 ## Table of contents
 
+- [Production topology](#production-topology)
 - [Architecture](#architecture)
+- [End-to-end runtime flow](#end-to-end-runtime-flow)
 - [Repository layout](#repository-layout)
 - [Quick start](#quick-start)
-- [Environment variables](#environment-variables)
+- [Environment variables and secrets](#environment-variables-and-secrets)
 - [Backend agent](#backend-agent)
 - [Frontend](#frontend)
 - [Models and provider limits](#models-and-provider-limits)
 - [Local development](#local-development)
+- [Testing and verification](#testing-and-verification)
 - [CI/CD](#cicd)
-- [Deployment](#deployment)
-- [Operations](#operations)
+- [Deployment details](#deployment-details)
+- [Operations runbook](#operations-runbook)
+- [Command cheat sheet](#command-cheat-sheet)
 - [Troubleshooting](#troubleshooting)
 - [Known limitations and cleanup opportunities](#known-limitations-and-cleanup-opportunities)
 - [Security notes](#security-notes)
+
+---
+
+## Production topology
+
+The project is deployed as a **monorepo**: one GitHub repository contains both the Python agent and the Next.js frontend.
+
+| Component | Value |
+| --- | --- |
+| GitHub repository | `ABSatpute/Technical_Help_Voicebot` (public) |
+| Production branch | `main` |
+| LiveKit project subdomain | `dangding-4s8gvz1g` |
+| LiveKit agent ID | `CA_3EHBXZnTfm5v` |
+| LiveKit deployment | `production`, region `us-east` |
+| Last verified agent version | `nLTKAPrP8PRX` |
+| Agent status | `Running` |
+| Vercel project | `technical-help-voicebot` |
+| Vercel root directory | `frontend` |
+| Frontend deployment | Vercel GitHub integration, status `success` |
+
+Deployment identifiers change over time. Use `lk agent status` and the Vercel dashboard to get the current values.
 
 ---
 
@@ -63,6 +88,70 @@ Request flow:
 
 ---
 
+## End-to-end runtime flow
+
+This is the full production path, from opening the page to the final usage metric.
+
+### 1. Browser bootstrap
+
+1. The browser loads the Next.js app from Vercel.
+2. `PreJoin` verifies `window.isSecureContext`; microphone APIs are only available on HTTPS or `localhost`.
+3. The user grants microphone permission.
+4. `PreJoin` enumerates audio input devices and renders a live level meter.
+5. The display name and room name are restored from `localStorage`; a random `voice-xxxxxxxx` room is generated if none exists.
+
+### 2. Token creation
+
+1. The user submits the join form.
+2. `frontend/src/app/page.tsx` calls `GET /api/token?room=<room>&name=<name>`.
+3. The Next.js route reads `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` on the server.
+4. The route sanitizes the room to `[A-Za-z0-9_-]{1,64}`, truncates the name to 48 characters, and generates a unique identity.
+5. `livekit-server-sdk` creates a JWT with a 2-hour TTL and grants `roomJoin`, `canPublish`, `canSubscribe`, and `canPublishData`.
+6. The route returns `{ token, serverUrl, room, identity }` with `Cache-Control: no-store`.
+
+### 3. Room connection and agent dispatch
+
+1. `LiveKitRoom` connects with the token and the selected microphone.
+2. The browser publishes microphone audio and data-channel messages.
+3. LiveKit Cloud sees the participant join and dispatches the registered agent worker.
+4. The agent runs in the LiveKit Cloud `production` deployment in `us-east`.
+
+### 4. Agent session startup
+
+1. `entrypoint` checks that `GROQ_API_KEY` exists.
+2. It constructs an `AgentSession` with Groq STT, Groq LLM, Groq TTS, Silero VAD, and LiveKit's turn detector.
+3. It registers usage and agent-state listeners.
+4. It starts `Assistant()` and enables BVC noise cancellation on the inbound audio track.
+5. `Assistant.on_enter` creates a `CollectConsent` task and asks for recording consent.
+
+### 5. Conversation loop
+
+1. The caller speaks; BVC removes background noise.
+2. Silero VAD detects speech; the turn detector decides when the utterance is complete.
+3. Groq Whisper transcribes the audio.
+4. Groq GPT-OSS generates a short reply using the agent instructions.
+5. Groq Orpheus synthesizes the reply with the `hannah` voice.
+6. The audio is published back into the room and played by `RoomAudioRenderer`.
+7. Transcript events and chat messages are rendered in the side panel.
+8. The caller can interrupt, mute, use push-to-talk, or switch audio devices at any time.
+
+### 6. Escalation
+
+1. The caller asks for a manager, or the assistant decides it cannot resolve the issue.
+2. The `escalate_to_manager` tool returns a `ManagerAgent` plus a transfer message.
+3. The session switches to the manager agent.
+4. The manager introduces itself and continues the conversation with the `troy` voice.
+5. The manager has authority to offer refunds, credits, or accommodations.
+
+### 7. Shutdown and metrics
+
+1. The session stops when the participant leaves, the agent errors, or the worker shuts down.
+2. `UsageCollector` prints aggregated token, audio, and cost data.
+3. `agent_state_changed` logs time-to-first-audio based on the last end-of-utterance metric.
+4. LiveKit Cloud keeps the agent deployment running and ready for the next room.
+
+---
+
 ## Repository layout
 
 This is a monorepo: the Python agent lives at the repository root and the Next.js client lives in `frontend/`. GitHub Actions uses path filters so agent changes and frontend changes are tested and deployed independently.
@@ -77,11 +166,13 @@ This is a monorepo: the Python agent lives at the repository root and the Next.j
 | `livekit.toml` | LiveKit Cloud project subdomain and agent ID used by the `lk` CLI. |
 | `.env` | Local secrets. Never commit this file. |
 | `frontend/` | Next.js 16 App Router client. |
+| `frontend/public/voicebot-icon.svg` | Shared voicebot brand mark and browser favicon. |
+| `frontend/src/app/layout.tsx` | Page title, description, social metadata, and favicon links. |
 | `frontend/src/app/api/token/route.ts` | Server-only LiveKit token endpoint. |
-| `frontend/src/components/PreJoin.tsx` | Name, room, microphone selection, mic test, invite link. |
+| `frontend/src/components/PreJoin.tsx` | Technical Help Voicebot join screen, name/room/mic selection, mic test, invite link. |
 | `frontend/src/components/VoiceRoom.tsx` | In-room UI: transcript, chat, audio controls, handoff display. |
 | `.github/workflows/agent.yml` | Agent CI and LiveKit Cloud deployment. |
-| `.github/workflows/frontend.yml` | Frontend CI and Vercel deployment. |
+| `.github/workflows/frontend.yml` | Frontend CI; Vercel's GitHub integration performs deployment. |
 
 ---
 
@@ -108,11 +199,13 @@ Frontend:
 
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
 Open `http://localhost:3000`, choose a microphone, and join a room. The agent joins automatically.
+
+For production deployment, see [CI/CD](#cicd) and [Deployment details](#deployment-details).
 
 For a text-only smoke test without a microphone:
 
@@ -125,7 +218,7 @@ lk agent debugger stop
 
 ---
 
-## Environment variables
+## Environment variables and secrets
 
 Create a `.env` in the repository root for the agent:
 
@@ -152,6 +245,19 @@ For LiveKit Cloud-hosted agents, `LIVEKIT_*` credentials are injected by the pla
 lk agent update-secrets --secrets "GROQ_API_KEY=your-groq-api-key"
 ```
 
+### Where each value lives
+
+| Value | Local agent (`/.env`) | GitHub Actions | Hosted agent | Vercel frontend |
+| --- | --- | --- | --- | --- |
+| `LIVEKIT_URL` | Yes | `LIVEKIT_URL` secret | Injected by LiveKit Cloud | Production env var |
+| `LIVEKIT_API_KEY` | Yes | `LIVEKIT_API_KEY` secret | Injected by LiveKit Cloud | Production env var |
+| `LIVEKIT_API_SECRET` | Yes | `LIVEKIT_API_SECRET` secret | Injected by LiveKit Cloud | Production env var |
+| `GROQ_API_KEY` | Yes | `GROQ_API_KEY` secret | Agent secret, updated by deploy | Not used |
+
+Local frontend credentials belong in `frontend/.env.local`; it is gitignored by `frontend/.gitignore`.
+
+Never use `NEXT_PUBLIC_` for `LIVEKIT_API_SECRET` or `GROQ_API_KEY`. The browser must never receive either value.
+
 ---
 
 ## Backend agent
@@ -173,6 +279,16 @@ if __name__ == "__main__":
 ```
 
 `AgentServer` is created at `agent.py:199`.
+
+### Session lifecycle
+
+1. `AgentServer` registers the agent worker with LiveKit Cloud.
+2. LiveKit dispatches a job when a participant joins a room.
+3. `entrypoint` validates `GROQ_API_KEY`, builds one `AgentSession`, and starts it with `Assistant()`.
+4. `Assistant.on_enter` blocks on `CollectConsent` until the caller answers.
+5. Each caller turn is processed by VAD and the turn detector, then STT, LLM, and TTS.
+6. Tool calls such as `escalate_to_manager` can replace the active agent inside the same session.
+7. When the session ends, usage metrics are flushed and the worker returns to the ready state.
 
 ### Model pipeline
 
@@ -274,6 +390,29 @@ The frontend is a Next.js 16 App Router application using React 19 and LiveKit C
 - Grants `roomJoin`, `canPublish`, `canSubscribe`, and `canPublishData`.
 - Returns `{ token, serverUrl, room, identity }` with `Cache-Control: no-store`.
 
+Request and response contract:
+
+```http
+GET /api/token?room=voice-demo&name=Alex
+```
+
+```json
+{
+  "token": "<short-lived-livekit-jwt>",
+  "serverUrl": "wss://your-project.livekit.cloud",
+  "room": "voice-demo",
+  "identity": "alex-a1b2c3"
+}
+```
+
+Failure contract:
+
+```json
+{ "error": "LiveKit credentials are not configured on the server." }
+```
+
+The failure response uses HTTP 500 and is returned only by the server route, never the browser bundle.
+
 ### Pre-join
 
 `frontend/src/components/PreJoin.tsx`:
@@ -312,6 +451,26 @@ Key behaviors:
 - **Playback unlock**: shows an “Enable audio playback” button if the browser blocks autoplay.
 
 Styling is custom CSS in `frontend/src/app/globals.css`; the project does not use Tailwind.
+
+### Data and persistence
+
+- There is no application database.
+- Display name and room name are stored in browser `localStorage`.
+- Transcript and chat state live in browser memory; they are lost on refresh or leave.
+- The agent does not write audio recordings to disk or object storage.
+- LiveKit rooms are ephemeral; tokens expire after 2 hours.
+- Agent usage metrics are logged, not persisted by this repository.
+
+### Branding and favicon
+
+The production brand is **Technical Help Voicebot**.
+
+- `frontend/public/voicebot-icon.svg` is the shared voicebot mark.
+- `frontend/src/app/layout.tsx` sets the browser tab title, description, Open Graph/Twitter metadata, and favicon links to `/voicebot-icon.svg`.
+- `frontend/src/components/PreJoin.tsx` uses the icon in the join-screen brand and updates the support-focused headline, feature list, room labels, and call-to-action text.
+- `frontend/src/components/VoiceRoom.tsx` uses the same icon in the in-room header.
+
+To replace the brand mark, update `voicebot-icon.svg`; the favicon and both UI placements follow automatically.
 
 ---
 
@@ -376,7 +535,7 @@ lk agent debugger stop
 
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -400,16 +559,183 @@ npm run build
 
 ---
 
+## Testing and verification
+
+### Automated checks
+
+The agent workflow runs:
+
+```powershell
+uv lock --check
+uv sync --locked
+uv run python -m py_compile agent.py
+```
+
+The frontend workflow runs:
+
+```powershell
+cd frontend
+npm ci --no-audit --no-fund
+npm run build
+```
+
+`npm run build` includes Next.js compilation and TypeScript checking.
+
+### Text-only agent test
+
+```powershell
+uv run agent.py dev
+```
+
+In another terminal:
+
+```powershell
+lk agent debugger start
+lk agent debugger say "yes"
+lk agent debugger say "My internet keeps dropping. Can you help?"
+lk agent debugger say "Can I speak to a manager?"
+lk agent debugger logs
+lk agent debugger stop
+```
+
+Expected behavior:
+
+1. The agent asks for consent.
+2. After consent, it gives a short answer.
+3. Asking for a manager transfers to `ManagerAgent`.
+
+### Voice test
+
+```powershell
+lk agent console
+```
+
+Speak into the microphone and verify that the agent responds with audio, the transcript updates, and the agent can be interrupted.
+
+### Test matrix
+
+| Area | Test | Expected result |
+| --- | --- | --- |
+| Consent | Say “yes” | Consent task completes and the assistant proceeds. |
+| Consent | Say “no” | The agent acknowledges and continues without recording. |
+| STT | Ask a technical question | Transcript accurately captures LiveKit/WebRTC terms. |
+| LLM | Ask a general support question | Short, conversational reply under the voice-style limits. |
+| TTS | Listen to a reply | `hannah` voice, no truncation, no rate-limit error. |
+| Handoff | Ask for a manager | `ManagerAgent` speaks with the `troy` voice. |
+| Barge-in | Interrupt while the agent is speaking | Agent stops or adapts and listens again. |
+| Mute | Press `M` or the mute button | Local microphone stops publishing. |
+| Push-to-talk | Hold `Space` | Microphone opens only while held. |
+| Chat | Send a text message | Message appears in the chat panel and reaches the agent. |
+| Transcript | Copy/download transcript | Combined transcript is exported. |
+| Tokens | Open `/api/token` without credentials | Returns a clear server error, not a secret. |
+
+### Production verification
+
+Run these checks after a deployment:
+
+```powershell
+lk agent status
+lk agent logs
+```
+
+Then:
+
+1. Open the Vercel deployment.
+2. Join a room with a microphone.
+3. Accept or decline consent.
+4. Speak one short sentence and confirm audio + transcript.
+5. Ask for a manager and confirm the handoff.
+6. Open the GitHub Actions run and confirm both workflows are green.
+7. Open the Vercel deployment and confirm the latest status is `Ready`.
+
+---
+
 ## CI/CD
 
-GitHub Actions workflows live in `.github/workflows/`:
+### Delivery model
 
-| Workflow | Triggers | What it does |
+This project uses two deployment mechanisms:
+
+| Component | CI | CD |
 | --- | --- | --- |
-| `agent.yml` | Pull requests and pushes touching agent files; manual dispatch | Runs `uv lock --check`, `uv sync --locked`, and `py_compile`; on `main` it deploys to LiveKit Cloud with `lk agent deploy`. |
-| `frontend.yml` | Pull requests and pushes touching `frontend/**`; manual dispatch | Runs `npm ci` and `npm run build`. Deployment is handled by Vercel's GitHub integration on merge to `main`. |
+| Python agent | GitHub Actions (`agent.yml`) | GitHub Actions runs `lk agent deploy` on `main`. |
+| Next.js frontend | GitHub Actions (`frontend.yml`) | Vercel's GitHub integration deploys on `main`. |
 
-The agent deploy job runs only for pushes to `main` or manual dispatches, uses the GitHub `production` environment, and is serialized with a concurrency group.
+Vercel is used for frontend CD because it is already connected to the repository and provides preview deployments for pull requests. The agent uses GitHub Actions because LiveKit Cloud has no equivalent native GitHub deployment integration.
+
+### End-to-end CI/CD flow
+
+```text
+git push / pull request
+        │
+        ├── agent paths ──▶ Agent CI/CD
+        │                      ├─ uv lock --check
+        │                      ├─ uv sync --locked
+        │                      ├─ py_compile agent.py
+        │                      └─ on main: lk agent deploy → LiveKit Cloud
+        │
+        └── frontend paths ─▶ Frontend CI
+                               ├─ npm ci
+                               └─ npm run build
+
+git push to main + frontend paths
+        └──▶ Vercel GitHub integration
+                ├─ Root Directory: frontend
+                ├─ npm ci
+                ├─ npm run build
+                └─ production deployment
+```
+
+### Path filters
+
+| Workflow | Runs when these paths change |
+| --- | --- |
+| `agent.yml` | `agent.py`, `pyproject.toml`, `uv.lock`, `Dockerfile`, `livekit.toml`, `.github/workflows/agent.yml` |
+| `frontend.yml` | `frontend/**`, `.github/workflows/frontend.yml` |
+
+Consequences:
+
+- Agent-only changes do not rebuild the frontend.
+- Frontend-only changes do not deploy the agent.
+- Documentation-only changes do not trigger either workflow.
+- Both workflows can be started manually from the GitHub **Actions** tab.
+
+### Trigger matrix
+
+| Event | Agent workflow | Frontend workflow | Vercel |
+| --- | --- | --- | --- |
+| Pull request touching agent files | Test only | Not triggered | Preview if frontend files changed |
+| Pull request touching `frontend/**` | Not triggered | Build only | Preview deployment |
+| Push to `main` touching agent files | Test + deploy | Not triggered | Not triggered |
+| Push to `main` touching `frontend/**` | Not triggered | Build | Production deployment |
+| `workflow_dispatch` | Test + deploy | Build | Existing Vercel integration still applies |
+| Docs-only change | Not triggered | Not triggered | Not triggered |
+
+### Agent workflow details
+
+`.github/workflows/agent.yml`:
+
+1. Checks out the repository.
+2. Installs `uv` **0.12.18** and caches based on `uv.lock`.
+3. Runs `uv lock --check`.
+4. Runs `uv sync --locked`.
+5. Runs `uv run python -m py_compile agent.py`.
+6. On `main` or manual dispatch, installs LiveKit CLI **2.19.4**.
+7. Runs `lk agent deploy --yes --secrets "GROQ_API_KEY=..."`.
+8. Runs `lk agent status` to confirm the deployment.
+
+The deploy job uses the GitHub `production` environment and a `agent-deploy-production` concurrency group. Two agent deploys cannot overlap.
+
+### Frontend workflow details
+
+`.github/workflows/frontend.yml`:
+
+1. Checks out the repository.
+2. Sets up Node.js **24** with npm caching.
+3. Runs `npm ci --no-audit --no-fund` in `frontend/`.
+4. Runs `npm run build` in `frontend/`.
+
+The workflow is CI only. Vercel performs the actual deployment when the same push reaches GitHub.
 
 ### Required GitHub secrets
 
@@ -426,9 +752,19 @@ Add these in **Settings → Secrets and variables → Actions**. You can also sc
 
 ### Vercel project settings
 
-The Vercel project is connected to this GitHub repository. Because the frontend now lives in `frontend/`, set the Vercel project's **Root Directory** to `frontend`. If this is not updated, Vercel's Git deployment fails.
+The Vercel project is connected to this GitHub repository.
 
-Vercel deploys the frontend automatically on pushes to `main`. No `VERCEL_TOKEN` is required for this flow. If you later want GitHub Actions to deploy Vercel as well, add `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`, then restore a CLI deploy job; the org and project IDs are stored in `frontend/.vercel/project.json` locally and that file is gitignored.
+| Setting | Value |
+| --- | --- |
+| Project | `technical-help-voicebot` |
+| Root Directory | `frontend` |
+| Framework | Next.js |
+| Install command | `npm ci` |
+| Build command | `npm run build` |
+| Output | Next.js default (`.next`) |
+| Production branch | `main` |
+
+The Root Directory must be `frontend`; otherwise Vercel tries to build the repository root and fails because the Next.js app is in `frontend/`.
 
 Set the frontend runtime environment variables in Vercel for Production (and Preview if needed):
 
@@ -438,9 +774,15 @@ LIVEKIT_API_KEY=your-livekit-api-key
 LIVEKIT_API_SECRET=your-livekit-api-secret
 ```
 
+No `VERCEL_TOKEN` is required for this flow. If you later want GitHub Actions to deploy Vercel as well, add `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`, then add a CLI deploy job. The org and project IDs are stored in `frontend/.vercel/project.json` locally and that file is gitignored.
+
 ### Manual deployment
 
-Agent: run **Actions → Agent CI/CD → Run workflow**, or run `lk agent deploy --yes` locally.
+Agent: run **Actions → Agent CI/CD → Run workflow**, or run:
+
+```powershell
+lk agent deploy --yes
+```
 
 Frontend: push to `main` and let Vercel deploy, or run:
 
@@ -449,9 +791,44 @@ cd frontend
 npx vercel --prod
 ```
 
-## Deployment
+### Rollback
 
-### Agent (LiveKit Cloud)
+Agent:
+
+```powershell
+lk agent versions
+lk agent rollback
+```
+
+Vercel:
+
+1. Open **Deployments**.
+2. Select the previous healthy deployment.
+3. Use **Promote to Production** or **Redeploy**.
+
+Code:
+
+```powershell
+git revert <commit>
+git push origin main
+```
+
+A revert triggers the same path-filtered CI/CD flow as any other commit.
+
+### Recommended repository protection
+
+For production use, enable these GitHub branch protection rules on `main`:
+
+- Require pull requests before merging.
+- Require the `Agent CI/CD / Validate agent` and `Frontend CI / Build frontend` checks.
+- Require branches to be up to date before merging.
+- Restrict who can push to `main`.
+
+These settings are not required for the current single-maintainer workflow, but they prevent untested changes from reaching production.
+
+## Deployment details
+
+### Agent deployment mechanics
 
 Run the deployment from the repository root, not from `frontend/`:
 
@@ -459,7 +836,29 @@ Run the deployment from the repository root, not from `frontend/`:
 lk agent deploy --yes
 ```
 
-The `lk` CLI detects the Python/uv project from `livekit.toml` and builds the `Dockerfile`.
+The `lk` CLI:
+
+1. Reads the project subdomain and agent ID from `livekit.toml`.
+2. Packages the repository root as the build context.
+3. Builds the `Dockerfile` on LiveKit Cloud.
+4. Injects the `GROQ_API_KEY` secret passed by the workflow.
+5. Creates a new agent version and promotes it to the `production` deployment.
+6. Starts one replica and reports it as `Running`.
+
+The production image:
+
+- Uses Python 3.14 on `python3.14-bookworm-slim`.
+- Installs dependencies with `uv sync --locked` (`Dockerfile:47`).
+- Pre-downloads plugin models with `livekit.agents download-files` (`Dockerfile:53`).
+- Excludes `frontend/` from the build context via `.dockerignore`.
+- Runs as the non-root `appuser` (`Dockerfile:83`).
+- Starts with `uv run agent.py start` (`Dockerfile:88`).
+
+Agent runtime credentials:
+
+- `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` are injected by LiveKit Cloud.
+- `GROQ_API_KEY` is an agent secret, updated by the deploy workflow.
+- No `.env` file is shipped in the image; `.dockerignore` excludes it.
 
 Useful deployment commands:
 
@@ -471,17 +870,21 @@ lk agent versions
 lk agent rollback
 ```
 
-The production image:
+### Frontend deployment mechanics
 
-- Uses Python 3.14 on `python3.14-bookworm-slim`.
-- Installs dependencies with `uv sync --locked` (`Dockerfile:47`).
-- Pre-downloads plugin models with `livekit.agents download-files` (`Dockerfile:53`).
-- Runs as the non-root `appuser` (`Dockerfile:83`).
-- Starts with `uv run agent.py start` (`Dockerfile:88`).
+Vercel builds and deploys the frontend from `frontend/`.
 
-### Frontend (Vercel or similar)
+| Step | Value |
+| --- | --- |
+| Trigger | Push to `main` that changes `frontend/**` |
+| Root Directory | `frontend` |
+| Install | `npm ci` |
+| Build | `npm run build` |
+| Output | Next.js default output |
+| Node.js | 24 |
+| Framework | Next.js 16 |
 
-Set these server-side environment variables in the hosting project:
+The frontend server route needs these Vercel environment variables:
 
 ```dotenv
 LIVEKIT_URL=wss://your-project.livekit.cloud
@@ -489,14 +892,13 @@ LIVEKIT_API_KEY=your-livekit-api-key
 LIVEKIT_API_SECRET=your-livekit-api-secret
 ```
 
-Build command: `npm run build`  
-Output: standard Next.js output.
+These are read only by `/api/token`. Do not expose `LIVEKIT_API_SECRET` to the browser and do not prefix it with `NEXT_PUBLIC_`.
 
-Do not expose `LIVEKIT_API_SECRET` to the browser.
+Vercel creates a deployment status on the GitHub commit. A successful production deployment is visible as a green **Vercel** check on `main`.
 
 ---
 
-## Operations
+## Operations runbook
 
 ### Agent secrets
 
@@ -518,18 +920,105 @@ Replace all existing secrets with only the required one:
 lk agent update-secrets --overwrite --yes --secrets "GROQ_API_KEY=your-groq-api-key"
 ```
 
-### Logs and status
+The GitHub Actions deploy workflow also writes `GROQ_API_KEY` on each deploy, so the secret and the workflow secret should stay in sync.
+
+### Agent status and logs
 
 ```powershell
 lk agent status
 lk agent logs
 ```
 
-The agent also logs usage summaries and time-to-first-audio in the process logs.
+The agent logs:
+
+- Per-metric values from `metrics.log_metrics`.
+- A usage summary at shutdown.
+- Time to first audio when the agent starts speaking.
+- Startup and provider errors.
+
+### Frontend status
+
+1. Open the Vercel project.
+2. Check **Deployments** for the latest production deployment.
+3. Confirm the deployment is **Ready**.
+4. Check the GitHub commit shows a green **Vercel** status.
+
+### GitHub Actions status
+
+```powershell
+gh run list --limit 10
+gh run view <run-id> --log-failed
+```
+
+Workflow names:
+
+- `Agent CI/CD`
+- `Frontend CI`
+
+### Key rotation
+
+If a key is exposed:
+
+1. Rotate it at the provider (LiveKit or Groq).
+2. Update the local `.env`.
+3. Update GitHub Actions secrets:
+
+```powershell
+gh secret set GROQ_API_KEY
+gh secret set LIVEKIT_API_KEY
+gh secret set LIVEKIT_API_SECRET
+```
+
+4. Update the hosted agent secret:
+
+```powershell
+lk agent update-secrets --overwrite --yes --secrets "GROQ_API_KEY=..."
+```
+
+5. Update the Vercel environment variables for `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`.
+6. Redeploy the agent and frontend.
+7. Revoke the old key.
+
+### Incident checklist
+
+1. Check `lk agent status`; confirm the agent is `Running`.
+2. Check `lk agent logs` for provider errors, rate limits, or missing secrets.
+3. Check the latest GitHub Actions runs.
+4. Check the latest Vercel deployment.
+5. Test `/api/token` directly; a 500 means the frontend environment variables are missing.
+6. Join a test room and verify consent, audio, transcript, and handoff.
+7. If a deploy caused the incident, roll back with `lk agent rollback` or Vercel **Promote to Production**.
 
 ### Project configuration
 
 `livekit.toml` stores the LiveKit project subdomain and agent ID used by the CLI. If you deploy to a different project, update this file or pass `--project` / `--subdomain` to `lk`.
+
+---
+
+## Command cheat sheet
+
+| Goal | Command |
+| --- | --- |
+| Install Python deps | `uv sync --locked` |
+| Verify lock file | `uv lock --check` |
+| Compile agent | `uv run python -m py_compile agent.py` |
+| Run local agent | `uv run agent.py dev` |
+| Text-only test | `lk agent debugger start` |
+| Voice test | `lk agent console` |
+| Deploy agent | `lk agent deploy --yes` |
+| Agent status | `lk agent status` |
+| Agent logs | `lk agent logs` |
+| Agent versions | `lk agent versions` |
+| Roll back agent | `lk agent rollback` |
+| List agent secrets | `lk agent secrets` |
+| Update agent secret | `lk agent update-secrets --secrets "GROQ_API_KEY=..."` |
+| Install frontend deps | `cd frontend; npm ci` |
+| Run frontend | `cd frontend; npm run dev` |
+| Build frontend | `cd frontend; npm run build` |
+| Deploy frontend manually | `cd frontend; npx vercel --prod` |
+| List GitHub runs | `gh run list --limit 10` |
+| View failed logs | `gh run view <run-id> --log-failed` |
+| Update GitHub secret | `gh secret set <NAME>` |
 
 ---
 
@@ -547,6 +1036,11 @@ The agent also logs usage summaries and time-to-first-audio in the process logs.
 | Token endpoint returns 500 | Frontend LiveKit env vars missing | Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` on the frontend server. |
 | Agent not dispatched | Agent worker not running or wrong project | Start `uv run agent.py dev` or deploy with `lk agent deploy`; check `lk agent status`. |
 | Transcripts missing | Browser permission, STT failure, or agent not publishing transcriptions | Check agent logs and browser console; confirm `useTranscriptions` is receiving events. |
+| Vercel build fails after the monorepo move | Vercel **Root Directory** is not `frontend` | Set Root Directory to `frontend` in Vercel project settings and redeploy. |
+| Vercel deploys but `/api/token` returns 500 | LiveKit env vars are missing in Vercel | Add `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` to the Vercel project. |
+| GitHub Actions agent deploy says `no projects configured` | GitHub Actions secrets are missing | Add `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `GROQ_API_KEY` secrets. |
+| Agent deploy succeeded but behavior is unchanged | The deploy ran on a different path or version | Check `lk agent status`, the Actions run, and the deployed version. |
+| Frontend did not deploy on a docs-only change | Path filters intentionally skip docs | Trigger a manual deployment if needed. |
 
 ---
 
@@ -558,19 +1052,23 @@ The agent also logs usage summaries and time-to-first-audio in the process logs.
 - `agent.py` contains duplicate imports and an unused `httpx` import; these can be removed.
 - `endpointing.max_delay` is `4.0` seconds; tune it for the desired latency versus turn-completeness tradeoff.
 - `.env` is plaintext and local-only. Use LiveKit agent secrets for hosted deployments and rotate any key that has appeared in logs.
-- There is no automated test suite in the repository; verification is currently done with the debugger, the agent console, and `npm run build`.
+- There is no automated end-to-end test suite; CI validates compilation and the production build, while voice behavior is verified with the debugger, agent console, and manual production checks.
 
 ---
 
 ## Security notes
 
 - Never commit `.env` or any file containing API keys.
+- `frontend/.env.local` is gitignored and must remain local.
 - The GitHub repository is currently public. If the agent code or project metadata should not be public, change repository visibility or move the monorepo to a private repository before pushing.
 - `LIVEKIT_API_SECRET` must remain server-side; the browser only receives a short-lived room JWT.
 - Tokens are scoped to one room, expire after 2 hours, and grant only publish/subscribe/data permissions.
 - Room names and display names are sanitized before token creation.
 - Rotate any API key that has been pasted into logs, screenshots, or chat.
 - Prefer `lk agent update-secrets` over baking secrets into the image or source files.
+- GitHub Actions secrets are the only deployment credentials stored in GitHub.
+- Vercel environment variables are server-side and are not exposed through `NEXT_PUBLIC_`.
+- The agent image excludes `.env` through `.dockerignore`, and `GROQ_API_KEY` is injected as an agent secret.
 - The response from `/api/token` is marked `no-store` to avoid caching tokens.
 
 ---

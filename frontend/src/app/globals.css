@@ -81,12 +81,11 @@ p {
   text-transform: uppercase;
 }
 
-.brand-mark {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: 0 0 24px rgba(124, 92, 255, 0.5);
+.brand-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  box-shadow: 0 0 24px rgba(34, 211, 238, 0.35);
   flex: none;
 }
 

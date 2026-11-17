@@ -385,7 +385,13 @@ export function VoiceRoom({
 
       <header className="room-header">
         <div className="room-title">
-          <span className="brand-mark" aria-hidden />
+          <img
+            className="brand-icon"
+            src="/voicebot-icon.svg"
+            alt=""
+            width={32}
+            height={32}
+          />
           <div>
             <strong>{roomName}</strong>
             <span className="subtle">

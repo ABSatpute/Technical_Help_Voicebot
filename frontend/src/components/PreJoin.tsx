@@ -115,23 +115,30 @@ export function PreJoin({ onJoin, joining, error }: PreJoinProps) {
     <main className="prejoin">
       <section className="prejoin-hero">
         <div className="brand">
-          <span className="brand-mark" aria-hidden />
-          Voice Studio
+          <img
+            className="brand-icon"
+            src="/voicebot-icon.svg"
+            alt=""
+            width={32}
+            height={32}
+          />
+          Technical Help Voicebot
         </div>
         <h1>
-          Talk to an AI that <span className="gradient-text">actually listens.</span>
+          Technical support that <span className="gradient-text">actually listens.</span>
         </h1>
         <p className="lede">
-          Real-time conversations with an AI voice agent powered by LiveKit Agents and LiveKit Cloud.
-          Speak naturally, interrupt any time, and watch the conversation stream in live.
+          Meet Technical Help Voicebot, a real-time AI support agent for LiveKit, WebRTC, SIP,
+          API tokens, and connectivity issues. Speak naturally, interrupt any time, and follow
+          every answer in live transcripts.
         </p>
         <ul className="feature-list">
-          <li>Sub-second voice turns with barge-in support</li>
-          <li>Live transcription you can copy or download</li>
-          <li>Text chat and audio device controls in the same room</li>
-          <li>Automatic agent dispatch — no setup after joining</li>
+          <li>Instant voice answers for technical and connectivity problems</li>
+          <li>Live transcripts and chat you can copy or download</li>
+          <li>Microphone, speaker, and push-to-talk controls in one place</li>
+          <li>Escalate to a manager when you need a human</li>
         </ul>
-        <p className="hero-foot">Powered by LiveKit Agents · WebRTC · Speech-to-speech pipeline</p>
+        <p className="hero-foot">Powered by LiveKit Agents · Groq STT / LLM / TTS · WebRTC</p>
       </section>
 
       <section className="prejoin-card">
@@ -148,13 +155,13 @@ export function PreJoin({ onJoin, joining, error }: PreJoinProps) {
           </label>
 
           <label>
-            Room
+            Support room
             <div className="room-row">
               <input
                 value={room}
                 onChange={(event) => setRoom(event.target.value)}
                 onBlur={() => setRoom((current) => normalizeRoom(current))}
-                placeholder="room name"
+                placeholder="support room name"
                 maxLength={64}
                 spellCheck={false}
               />
@@ -162,9 +169,9 @@ export function PreJoin({ onJoin, joining, error }: PreJoinProps) {
                 type="button"
                 className="btn ghost"
                 onClick={() => setRoom(randomRoom())}
-                title="Generate a new room name"
+                title="Generate a new support room"
               >
-                New
+                New room
               </button>
             </div>
           </label>
@@ -208,14 +215,16 @@ export function PreJoin({ onJoin, joining, error }: PreJoinProps) {
             className="btn primary"
             disabled={!name.trim() || joining || insecure}
           >
-            {insecure ? 'HTTPS required' : joining ? 'Joining room…' : 'Join room'}
+            {insecure ? 'HTTPS required' : joining ? 'Starting session…' : 'Start voice session'}
           </button>
 
           <button type="button" className="btn ghost" onClick={() => void copyInvite()}>
-            {copied ? 'Invite link copied' : 'Copy invite link'}
+            {copied ? 'Session link copied' : 'Copy session link'}
           </button>
 
-          <p className="hint">The AI agent joins automatically. Allow microphone access when prompted.</p>
+          <p className="hint">
+            The support agent joins automatically. Allow microphone access when prompted.
+          </p>
         </form>
       </section>
     </main>

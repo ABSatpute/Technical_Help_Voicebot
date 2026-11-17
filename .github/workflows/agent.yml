@@ -1,0 +1,84 @@
+name: Agent CI/CD
+
+on:
+  pull_request:
+    paths:
+      - "agent.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Dockerfile"
+      - "livekit.toml"
+      - ".github/workflows/agent.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "agent.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Dockerfile"
+      - "livekit.toml"
+      - ".github/workflows/agent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Validate agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.18"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Verify lock file is current
+        run: uv lock --check
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Compile agent
+        run: uv run python -m py_compile agent.py
+
+  deploy:
+    name: Deploy agent to LiveKit Cloud
+    needs: test
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: agent-deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install LiveKit CLI
+        run: |
+          curl -fsSL https://github.com/livekit/livekit-cli/releases/download/v2.19.4/lk_2.19.4_linux_amd64.tar.gz | tar -xz
+          sudo install -m 0755 lk /usr/local/bin/lk
+          lk --version
+
+      - name: Deploy agent
+        env:
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          lk agent deploy --yes --secrets "GROQ_API_KEY=${GROQ_API_KEY}"
+          lk agent status
